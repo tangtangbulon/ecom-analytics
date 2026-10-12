@@ -1,0 +1,27 @@
+[
+    {
+        "sku": "A123",
+        "price": 10.5,
+        "quantity": 3
+    },
+    {
+        "sku": "B456",
+        "price": 15.0,
+        "quantity": 2
+    },
+    {
+        "sku": "C789",
+        "price": 20.0,
+        "quantity": 1
+    },
+    {
+        "sku": "D101",
+        "price": 12.5,
+        "quantity": 4
+    },
+    {
+        "sku": "E202",
+        "price": 18.0,
+        "quantity": 3
+    }
+]
