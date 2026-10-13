@@ -2,8 +2,26 @@ from pathlib import Path
 import csv
 import json
 from dataclasses import dataclass,asdict
+import logging
+import sys
 
 
+
+log_format="%(asctime)s - %(levelname)s - %(message)s"
+
+    
+current_dir=Path(__file__).parent
+#csv_file_path=current_dir/"orders.csv"
+log_file_path=current_dir/"logs.log"
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format=log_format,
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(log_file_path,encoding="utf-8")
+    ]
+)
 
 
 @dataclass
@@ -11,12 +29,6 @@ class Order:
     sku:str
     price:float
     quantity:int
-
-
-    
-current_dir=Path(__file__).parent
-csv_file_path=current_dir/"orders.csv"
-
 
 def read_csv_data(file_path):
     data_list=[]
@@ -42,29 +54,62 @@ def read_csv_data(file_path):
                     data_list.append(order)
 
                 except ValueError as e:
-                    print(f"数据校验失败，跳过改行: {e}")
+                    logging.warning(f"第{reader.line_num}行数据校验失败，跳过该行: {e}")
                     continue
-                print(f"-> 正在处理 SKU: {row.get('sku', '未知')} 的后续逻辑...")
+                logging.info(f"-> 正在处理 SKU: {row.get('sku', '未知')} 的后续逻辑...")
                 
-            return data_list
+        return data_list
+    except FileNotFoundError:
+        logging.error(f"文件不存在: {file_path}")
+        return []
+
     except UnicodeDecodeError:
-        print("UTF-8 读取失败，正在尝试GBK编码...")
-        
-
-        with open(file_path,mode="r",encoding="gbk") as f:
-            reader=csv.DictReader(f)
-            for row in reader:
-                row['price']=float(row['price'])
-                row['quantity']=int(row['quantity'])
-                data_list.append(row)
-            return data_list
+        logging.error(f"文件编码错误: {file_path}")
+        return []
 
 
-data_list=[asdict(order) for order in read_csv_data(csv_file_path)]
-print(data_list)
 
 
-json_file_path=current_dir/"orders.json"
-with open(json_file_path,mode="w",encoding="utf-8") as f:
-    json.dump(data_list,f,ensure_ascii=False,indent=4)
-print(f"成功导出JSON文件: {json_file_path}")
+
+if __name__=="__main__":
+
+    if len(sys.argv)<2:
+        logging.warning("错误：请在命令中指定文件名，例如: python main.py orders.csv")
+        sys.exit(1)
+    input_file=sys.argv[1]
+    csv_file_path=current_dir/input_file
+
+
+    data_list=read_csv_data(csv_file_path)  
+    
+    if not data_list:
+        logging.warning(f"未获取到有效数据,退出程序")
+        sys.exit(0)
+    # else:
+        json_file_path=current_dir/"orders.json"
+        try:
+            data_list=[asdict(order) for order in data_list]
+            with open(json_file_path,mode="w",encoding="utf-8") as f:
+                json.dump(data_list,f,ensure_ascii=False,indent=4)
+            logging.info(f"成功导出JSON文件: {json_file_path}")
+        except Exception as e:
+            logging.error(f"导出JSON文件失败: {e}")
+
+
+    summary={}
+    for order in data_list:
+        sku=order.sku
+        if sku not in summary:
+            summary[sku]={
+                "total_quantity":0,
+                "total_price":0.0
+            }
+        summary[sku]["total_quantity"]+=order.quantity
+        summary[sku]["total_price"]+=order.price*order.quantity
+    
+    print("\n" + "-" * 45)
+    print(f"{'SKU':<10} | {'总销量':<10} | {'总销售额':<15}")
+    print("-" * 45)
+    for sku,data in summary.items():
+        print(f"{sku:<10} | {data['total_quantity']:<10} | {data['total_price']:>15.2f}")
+    print("-" * 45+"\n")
