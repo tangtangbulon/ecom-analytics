@@ -6,13 +6,15 @@ import logging
 import sys
 
 
-
 log_format="%(asctime)s - %(levelname)s - %(message)s"
 
     
 current_dir=Path(__file__).parent
 #csv_file_path=current_dir/"orders.csv"
 log_file_path=current_dir/"logs.log"
+finance_dir = Path(__file__).resolve().parents[1] / "pandas_file_data" / "FinanceProject"
+sys.path.append(str(finance_dir))
+from test_finance import calculate_gross_margin
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -26,9 +28,13 @@ logging.basicConfig(
 
 @dataclass
 class Order:
+    order_id:str
+    date:str
     sku:str
     price:float
     quantity:int
+    cost: float
+    store:str
 
 def read_csv_data(file_path):
     data_list=[]
@@ -36,6 +42,8 @@ def read_csv_data(file_path):
         with open(file_path,mode="r",encoding="utf-8") as f:
             reader=csv.DictReader(f)
             for row in reader:
+                raw_cost=row.get('cost',0.0)
+                cost_value=float(raw_cost) if raw_cost else 0.0
                 try:
                     price_value=float(row['price'] if row['price'] else 0.0)
                     quantity_value=int(row['quantity'] if row['quantity'] else 0)
@@ -49,7 +57,11 @@ def read_csv_data(file_path):
                     order=Order(
                         sku=row['sku'],
                         price=price_value,
-                        quantity=quantity_value
+                        quantity=quantity_value,
+                        cost=cost_value,
+                        order_id=row['order_id'],
+                        date=row['date'],
+                        store=row['store']
                     )
                     data_list.append(order)
 
@@ -102,14 +114,24 @@ if __name__=="__main__":
         if sku not in summary:
             summary[sku]={
                 "total_quantity":0,
-                "total_price":0.0
+                "total_price":0.0,
+                "total_cost":0.0
+                
             }
         summary[sku]["total_quantity"]+=order.quantity
         summary[sku]["total_price"]+=order.price*order.quantity
+        summary[sku]["total_cost"]+=order.cost*order.quantity
     
-    print("\n" + "-" * 45)
-    print(f"{'SKU':<10} | {'总销量':<10} | {'总销售额':<15}")
-    print("-" * 45)
+
+    for sku, data in summary.items():
+        data["gross_margin"] = calculate_gross_margin(
+            data["total_price"],   # 销售额
+            data["total_cost"],    # 成本
+        )
+
+    print("\n" + "-" * 78)
+    print(f"{'SKU':<10} | {'总销量':<10} | {'总销售额':<15} | {'总成本':<15} | {'毛利率':<15}")
+    print("-" * 78)
     for sku,data in summary.items():
-        print(f"{sku:<10} | {data['total_quantity']:<10} | {data['total_price']:>15.2f}")
-    print("-" * 45+"\n")
+        print(f"{sku:<10} | {data['total_quantity']:<10} | {data['total_price']:>15.2f} | {data['total_cost']:>15.2f} | {data['gross_margin']:>15.2f}")
+    print("-" * 78+"\n")
