@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass,asdict
 import logging
 import sys
+import sqlite3
 
 
 log_format="%(asctime)s - %(levelname)s - %(message)s"
@@ -12,17 +13,21 @@ log_format="%(asctime)s - %(levelname)s - %(message)s"
 current_dir=Path(__file__).parent
 #csv_file_path=current_dir/"orders.csv"
 log_file_path=current_dir/"logs.log"
-finance_dir = Path(__file__).resolve().parents[1] / "pandas_file_data" / "FinanceProject"
+project_dir = Path(__file__).resolve().parents[1]
+finance_dir = project_dir / "pandas_file_data" / "FinanceProject"
 sys.path.append(str(finance_dir))
+sys.path.append(str(project_dir))
 from test_finance import calculate_gross_margin
+from utils import get_summary_data, insert_many_order
 
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
+file_handler.setLevel(logging.DEBUG)
 logging.basicConfig(
     level=logging.DEBUG,
     format=log_format,
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(log_file_path,encoding="utf-8")
-    ]
+    handlers=[console_handler, file_handler],
 )
 
 
@@ -37,101 +42,98 @@ class Order:
     store:str
 
 def read_csv_data(file_path):
-    data_list=[]
+    orders = []
     try:
-        with open(file_path,mode="r",encoding="utf-8") as f:
-            reader=csv.DictReader(f)
+        with open(file_path, mode="r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
             for row in reader:
-                raw_cost=row.get('cost',0.0)
-                cost_value=float(raw_cost) if raw_cost else 0.0
+                raw_cost = row.get("cost", 0.0)
+                cost_value = float(raw_cost) if raw_cost else 0.0
                 try:
-                    price_value=float(row['price'] if row['price'] else 0.0)
-                    quantity_value=int(row['quantity'] if row['quantity'] else 0)
+                    price_value = float(row["price"] if row["price"] else 0.0)
+                    quantity_value = int(row["quantity"] if row["quantity"] else 0)
 
-                    if price_value<0:
+                    if price_value < 0:
                         raise ValueError(f"金额不能为负(SKU:{row['sku']},价格:{price_value})")
-                    
-                    if quantity_value<=0:
+
+                    if quantity_value <= 0:
                         raise ValueError(f"数量不能为负(SKU:{row['sku']},数量:{quantity_value})")
 
-                    order=Order(
-                        sku=row['sku'],
+                    orders.append(Order(
+                        sku=row["sku"],
                         price=price_value,
                         quantity=quantity_value,
                         cost=cost_value,
-                        order_id=row['order_id'],
-                        date=row['date'],
-                        store=row['store']
-                    )
-                    data_list.append(order)
-
+                        order_id=row["order_id"],
+                        date=row["date"],
+                        store=row["store"],
+                    ))
                 except ValueError as e:
                     logging.warning(f"第{reader.line_num}行数据校验失败，跳过该行: {e}")
                     continue
-                logging.info(f"-> 正在处理 SKU: {row.get('sku', '未知')} 的后续逻辑...")
-                
-        return data_list
+        logging.info(f"读取完成，有效订单 {len(orders)} 条")
+        return orders
     except FileNotFoundError:
         logging.error(f"文件不存在: {file_path}")
         return []
-
     except UnicodeDecodeError:
         logging.error(f"文件编码错误: {file_path}")
         return []
 
 
+def display_width(text):
+    width = 0
+    for ch in str(text):
+        width += 2 if ord(ch) > 127 else 1
+    return width
 
 
+def pad(text, width, align="left"):
+    text = str(text)
+    gap = max(width - display_width(text), 0)
+    if align == "right":
+        return " " * gap + text
+    return text + " " * gap
 
-if __name__=="__main__":
 
-    if len(sys.argv)<2:
+def print_summary(summary_list):
+    headers = ("SKU", "店铺", "总销量", "总销售额", "商品成本", "佣金", "优惠", "其他费用", "利润")
+    widths = (10, 12, 8, 12, 12, 10, 10, 10, 12)
+    aligns = ("left", "left", "right", "right", "right", "right", "right", "right", "right")
+
+    def format_row(values):
+        cells = [pad(value, width, align) for value, width, align in zip(values, widths, aligns)]
+        return " | ".join(cells)
+
+    line = "-" * display_width(format_row(headers))
+    print("\n" + line)
+    print(format_row(headers))
+    print(line)
+    for row in summary_list:
+        print(format_row((
+            row["sku"],
+            row["store"],
+            row["total_quantity"],
+            f"{row['total_revenue']:.2f}",
+            f"{row['product_cost']:.2f}",
+            f"{row['commission_cost']:.2f}",
+            f"{row['coupon_cost']:.2f}",
+            f"{row['other_cost']:.2f}",
+            f"{row['total_profit']:.2f}",
+        )))
+    print(line + "\n")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
         logging.warning("错误：请在命令中指定文件名，例如: python main.py orders.csv")
         sys.exit(1)
-    input_file=sys.argv[1]
-    csv_file_path=current_dir/input_file
 
-
-    data_list=read_csv_data(csv_file_path)  
-    
-    if not data_list:
-        logging.warning(f"未获取到有效数据,退出程序")
+    csv_file_path = current_dir / sys.argv[1]
+    orders = read_csv_data(csv_file_path)
+    if not orders:
+        logging.warning("未获取到有效数据,退出程序")
         sys.exit(0)
-    # else:
-        json_file_path=current_dir/"orders.json"
-        try:
-            data_list=[asdict(order) for order in data_list]
-            with open(json_file_path,mode="w",encoding="utf-8") as f:
-                json.dump(data_list,f,ensure_ascii=False,indent=4)
-            logging.info(f"成功导出JSON文件: {json_file_path}")
-        except Exception as e:
-            logging.error(f"导出JSON文件失败: {e}")
-
-
-    summary={}
-    for order in data_list:
-        sku=order.sku
-        if sku not in summary:
-            summary[sku]={
-                "total_quantity":0,
-                "total_price":0.0,
-                "total_cost":0.0
-                
-            }
-        summary[sku]["total_quantity"]+=order.quantity
-        summary[sku]["total_price"]+=order.price*order.quantity
-        summary[sku]["total_cost"]+=order.cost*order.quantity
-    
-
-    for sku, data in summary.items():
-        data["gross_margin"] = calculate_gross_margin(
-            data["total_price"],   # 销售额
-            data["total_cost"],    # 成本
-        )
-
-    print("\n" + "-" * 78)
-    print(f"{'SKU':<10} | {'总销量':<10} | {'总销售额':<15} | {'总成本':<15} | {'毛利率':<15}")
-    print("-" * 78)
-    for sku,data in summary.items():
-        print(f"{sku:<10} | {data['total_quantity']:<10} | {data['total_price']:>15.2f} | {data['total_cost']:>15.2f} | {data['gross_margin']:>15.2f}")
-    print("-" * 78+"\n")
+    insert_many_order(orders)
+    summary_list = get_summary_data()
+    print_summary(summary_list)
